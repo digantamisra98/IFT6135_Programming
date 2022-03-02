@@ -74,29 +74,38 @@ class BassetDataset(Dataset):
 
         # Sequence & Target
         output = {'sequence': None, 'target': None}
+        output['sequence'] = self.inputs[idx]
+        output['target'] = self.outputs[idx]
 
-        # WRITE CODE HERE
+        # Convert to float32
+        output['sequence'] = torch.tensor(output['sequence'].astype(np.float32))
+        output['target'] = torch.tensor(output['target'].astype(np.float32))
+
+        # Change the shape of the data to match what the model expects
+        output['sequence'] = output['sequence'].permute(1,2,0)
 
         return output
 
     def __len__(self):
         # WRITE CODE HERE
-        return 0
+        return len(self.ids)
 
     def get_seq_len(self):
         """
         Answer to Q1 part 2
         """
         # WRITE CODE HERE
-        return 0
+        return self.inputs[0].shape[-1]
 
     def is_equivalent(self):
         """
         Answer to Q1 part 3
         """
         # WRITE CODE HERE
-        return 0
-
+        if self.inputs[0].shape == (4, 1, self.get_seq_len()):
+            return True
+        else:
+            return False
 
 class Basset(nn.Module):
     """
@@ -108,27 +117,27 @@ class Basset(nn.Module):
     def __init__(self):
         super(Basset, self).__init__()
 
-        self.dropout = ?  # should be float
+        self.dropout = 0.3  # should be float
         self.num_cell_types = 164
 
-        self.conv1 = nn.Conv2d(1, 300, (19, ?), stride=(1, 1), padding=(9, 0))
-        self.conv2 = nn.Conv2d(300, ?, (?, 1), stride=(1, 1), padding=(?, 0))
-        self.conv3 = nn.Conv2d(?, 200, (?, 1), stride=(1, 1), padding=(4, 0))
+        self.conv1 = nn.Conv2d(1, 300, (19, 4), stride=(1, 1), padding=(9, 0))
+        self.conv2 = nn.Conv2d(300, 200, (11, 1), stride=(1, 1), padding=(5, 0))
+        self.conv3 = nn.Conv2d(200, 200, (7, 1), stride=(1, 1), padding=(4, 0))
 
         self.bn1 = nn.BatchNorm2d(300)
-        self.bn2 = nn.BatchNorm2d(?)
+        self.bn2 = nn.BatchNorm2d(200)
         self.bn3 = nn.BatchNorm2d(200)
         self.maxpool1 = nn.MaxPool2d((3, 1))
-        self.maxpool2 = nn.MaxPool2d((?, 1))
-        self.maxpool3 = nn.MaxPool2d((?, 1))
+        self.maxpool2 = nn.MaxPool2d((4, 1))
+        self.maxpool3 = nn.MaxPool2d((4, 1))
 
-        self.fc1 = nn.Linear(13*200, ?)
-        self.bn4 = nn.BatchNorm1d(?)
+        self.fc1 = nn.Linear(13*200, 1000)
+        self.bn4 = nn.BatchNorm1d(1000)
 
-        self.fc2 = nn.Linear(1000, ?)
-        self.bn5 = nn.BatchNorm1d(?)
+        self.fc2 = nn.Linear(1000, 1000)
+        self.bn5 = nn.BatchNorm1d(1000)
 
-        self.fc3 = nn.Linear(?, self.num_cell_types)
+        self.fc3 = nn.Linear(1000, self.num_cell_types)
 
     def forward(self, x):
         """
@@ -144,8 +153,20 @@ class Basset(nn.Module):
         """
 
         # WRITE CODE HERE
-        return 0
-
+        x = x.view(-1, 1, 600, 4)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = self.maxpool1(x)
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.maxpool2(x)
+        x = F.relu(self.bn3(self.conv3(x)))
+        x = self.maxpool3(x)
+        x = x.view(-1, 13*200)
+        x = F.relu(self.bn4(self.fc1(x)))
+        x = F.dropout(x, self.dropout, training=self.training)
+        x = F.relu(self.bn5(self.fc2(x)))
+        x = F.dropout(x, self.dropout, training=self.training)
+        x = self.fc3(x)
+        return x
 
 def compute_fpr_tpr(y_true, y_pred):
     """
@@ -160,7 +181,13 @@ def compute_fpr_tpr(y_true, y_pred):
     output = {'fpr': 0., 'tpr': 0.}
 
     # WRITE CODE HERE
+    tp = np.sum(y_true * y_pred)
+    fp = np.sum((1 - y_true) * y_pred)
+    fn = np.sum(y_true * (1 - y_pred))
+    tn = np.sum((1 - y_true) * (1 - y_pred))
 
+    output['tpr'] = tp / (tp + fn)
+    output['fpr'] = fp / (fp + tn)
     return output
 
 
@@ -183,6 +210,16 @@ def compute_fpr_tpr_dumb_model():
     output = {'fpr_list': [], 'tpr_list': []}
 
     # WRITE CODE HERE
+    y_true = np.random.randint(0, 2, 1000)
+    y_pred = np.random.uniform(0, 1, 1000)
+
+    for k in np.arange(0, 1, 0.05):
+        y_ = np.copy(y_pred)
+        y_[y_ < k] = 0
+        y_[y_ >= k] = 1
+
+        output['tpr_list'].append(compute_fpr_tpr(y_true, y_)['tpr'])
+        output['fpr_list'].append(compute_fpr_tpr(y_true, y_)['fpr'])
 
     return output
 
@@ -205,6 +242,17 @@ def compute_fpr_tpr_smart_model():
     output = {'fpr_list': [], 'tpr_list': []}
 
     # WRITE CODE HERE
+    y_true = np.random.randint(0, 2, 1000)
+    y_pred = np.random.uniform(0.4, 1, 1000)
+    y_pred[y_true == 0] = np.random.uniform(0, 0.6, 1000)[y_true == 0]
+
+    for k in np.arange(0, 1, 0.05):
+        y_ = np.copy(y_pred)
+        y_[y_ < k] = 0
+        y_[y_ >= k] = 1
+
+        output['tpr_list'].append(compute_fpr_tpr(y_true, y_)['tpr'])
+        output['fpr_list'].append(compute_fpr_tpr(y_true, y_)['fpr']) 
 
     return output
 
@@ -220,6 +268,8 @@ def compute_auc_both_models():
     output = {'auc_dumb_model': 0., 'auc_smart_model': 0.}
 
     # WRITE CODE HERE
+    output['auc_dumb_model'] = np.trapz(np.flip(compute_fpr_tpr_dumb_model()['tpr_list']), np.flip(compute_fpr_tpr_dumb_model()['fpr_list']))
+    output['auc_smart_model'] = np.trapz(np.flip(compute_fpr_tpr_smart_model()['tpr_list']), np.flip(compute_fpr_tpr_smart_model()['fpr_list']))
 
     return output
 
@@ -247,6 +297,22 @@ def compute_auc_untrained_model(model, dataloader, device):
     output = {'auc': 0.}
 
     # WRITE CODE HERE
+    y_true = []
+    y_pred = []
+
+    model.eval()
+    with torch.no_grad():
+        for batch in dataloader:
+            x, y = batch["sequence"], batch["target"]
+            x = x.to(device)
+            y = y.to(device)
+            y_pred.append(torch.sigmoid(model(x)).reshape(-1).detach().cpu().numpy())
+            y_true.append(y.reshape(-1).detach().cpu().numpy())
+
+    y_true = np.concatenate(y_true)
+    y_pred = np.concatenate(y_pred)
+
+    output['auc'] = compute_auc(y_true, y_pred)['auc']
 
     return output
 
@@ -266,8 +332,18 @@ def compute_auc(y_true, y_model):
     """
     output = {'auc': 0.}
 
-    # WRITE CODE HERE
+    tpr_list, fpr_list = [], []
 
+    # WRITE CODE HERE
+    for k in np.arange(0, 1, 0.05):
+        y_ = np.copy(y_model)
+        y_[y_ < k] = 0
+        y_[y_ >= k] = 1
+        output = compute_fpr_tpr(y_true, y_)
+        tpr_list.append(output['tpr'])
+        fpr_list.append(output['fpr'])
+
+    output['auc'] = np.trapz(np.flip(tpr_list), np.flip(fpr_list))
     return output
 
 
@@ -278,7 +354,7 @@ def get_critereon():
     """
 
     # WRITE CODE HERE
-
+    critereon = nn.BCEWithLogitsLoss()
     return critereon
 
 
@@ -309,6 +385,21 @@ def train_loop(model, train_dataloader, device, optimizer, criterion):
               'total_loss': 0.}
 
     # WRITE CODE HERE
+    model.train()
+    for i, data in enumerate(train_dataloader):
+        x, y = data["sequence"].to(device), data["target"].to(device)
+        optimizer.zero_grad()
+        y_pred = torch.sigmoid(model(x))
+        loss = criterion(y_pred, y)
+        loss.backward()
+        optimizer.step()
+        output['total_loss'] += loss.item()
+        output['total_score'] += compute_auc(y.cpu().detach().numpy(), y_pred.cpu().detach().numpy())['auc']
+        if i % 50 == 0:
+            print('Iteration: {}\tLoss: {}\tScore: {}'.format(i, loss.item(), compute_auc(y.cpu().detach().numpy(), y_pred.cpu().detach().numpy())['auc']))
+
+    output['total_score'] /= len(train_dataloader.dataset)
+    output['total_loss'] /= len(train_dataloader.dataset)
 
     return output['total_score'], output['total_loss']
 
@@ -339,5 +430,18 @@ def valid_loop(model, valid_dataloader, device, optimizer, criterion):
               'total_loss': 0.}
 
     # WRITE CODE HERE
+    model.eval()
+    with torch.no_grad():
+        for i, data in enumerate(valid_dataloader):
+            x, y = data["sequence"].to(device), data["target"].to(device)
+            y_pred = torch.sigmoid(model(x))
+            loss = criterion(y_pred, y)
+            output['total_loss'] += loss.item()
+            output['total_score'] += compute_auc(y.cpu().detach().numpy(), y_pred.cpu().detach().numpy())['auc']
+            if i % 50 == 0:
+                print('Iteration: {}\tLoss: {}\tScore: {}'.format(i, loss.item(), compute_auc(y.cpu().detach().numpy(), y_pred.cpu().detach().numpy())['auc']))
+
+    output['total_score'] /= len(valid_dataloader.dataset)
+    output['total_loss'] /= len(valid_dataloader.dataset)
 
     return output['total_score'], output['total_loss']
